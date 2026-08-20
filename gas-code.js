@@ -73,30 +73,37 @@ function getUserAccess(email) {
   };
 }
 
-// 處理 GET 請求
+// 處理 GET 請求 (支援已登入管理員/團員，以及未登入訪客唯讀瀏覽)
 function doGet(e) {
   const action = e.parameter.action;
-  const authHeader = e.parameter.token || ""; // 支援 query 傳 token 或 headers 傳遞
+  const authHeader = e.parameter.token || "";
   let token = authHeader;
   
-  // 處理 CORS options
-  const headers = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization"
-  };
-  
-  // 嘗試從 Authorization 標頭取得 Bearer token
-  // 由於 GAS doGet 在某些環境可能無法完整讀取自訂 headers，故前端可雙向傳遞
-  
-  // 身份驗證
-  const email = verifyIdToken(token);
-  if (!email) {
-    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Invalid ID Token" }))
-                         .setMimeType(ContentService.MimeType.JSON);
+  // 身份驗證 (未提供 token 或驗證失敗則為 guest 訪客)
+  let email = null;
+  if (token) {
+    email = verifyIdToken(token);
   }
   
-  const access = getUserAccess(email);
+  let access = { role: "guest", trips: [] };
+  const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
+  const tripSheet = masterSpreadsheet.getSheetByName("Trips");
+  const tripRows = tripSheet.getDataRange().getValues();
+  
+  if (email) {
+    access = getUserAccess(email);
+  } else {
+    // 訪客模式：讀取所有行程清單（隱蔽 Sheet & Folder ID）
+    const publicTrips = [];
+    for (let i = 1; i < tripRows.length; i++) {
+      const uuid = tripRows[i][0];
+      const name = tripRows[i][1];
+      if (uuid) {
+        publicTrips.push({ uuid: uuid, name: name });
+      }
+    }
+    access = { role: "guest", trips: publicTrips };
+  }
   
   if (action === "getTrips") {
     const responseData = {
@@ -110,19 +117,9 @@ function doGet(e) {
   
   if (action === "getTripData") {
     const tripUuid = e.parameter.tripUuid;
-    // 檢查是否有權限讀取此行程
-    const hasAccess = access.trips.some(t => t.uuid === tripUuid);
-    if (!hasAccess) {
-      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Permission Denied" }))
-                           .setMimeType(ContentService.MimeType.JSON);
-    }
-    
-    // 獲取該行程對應的 Sheet ID
-    const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
-    const tripSheet = masterSpreadsheet.getSheetByName("Trips");
-    const tripRows = tripSheet.getDataRange().getValues();
     let targetSheetId = "";
     
+    // 搜尋對應的 Sheet ID
     for (let i = 1; i < tripRows.length; i++) {
       if (tripRows[i][0] === tripUuid) {
         targetSheetId = tripRows[i][2];
@@ -131,22 +128,22 @@ function doGet(e) {
     }
     
     if (!targetSheetId) {
-      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Linked Sheet Not Found" }))
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "找不到該行程專屬試算表" }))
                            .setMimeType(ContentService.MimeType.JSON);
     }
     
     // 讀取該旅遊專屬試算表的資料
     try {
       const data = loadTripDetails(targetSheetId);
-      return ContentService.createTextOutput(JSON.stringify({ status: "success", data: data }))
+      return ContentService.createTextOutput(JSON.stringify({ status: "success", role: access.role, data: data }))
                            .setMimeType(ContentService.MimeType.JSON);
     } catch (err) {
-      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Failed to read database: " + err.message }))
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "讀取資料庫失敗: " + err.message }))
                            .setMimeType(ContentService.MimeType.JSON);
     }
   }
   
-  return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Invalid Action" }))
+  return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "無效的操作指令" }))
                        .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -188,13 +185,16 @@ function doPost(e) {
     const sheetId = postData.sheetId;
     const folderId = postData.folderId;
     const allowedUsers = postData.allowedUsers || "";
+    const startDate = postData.startDate || "";
+    const endDate = postData.endDate || "";
+    const duration = postData.duration || "";
     
     const tripSheet = masterSpreadsheet.getSheetByName("Trips");
     tripSheet.appendRow([uuid, name, sheetId, folderId, allowedUsers]);
     
     // 初始化關聯試算表的結構與分頁
     try {
-      initializeSubSheet(sheetId, name);
+      initializeSubSheet(sheetId, name, startDate, endDate, duration);
       return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "Trip created & initialized" }))
                            .setMimeType(ContentService.MimeType.JSON);
     } catch(err) {
@@ -203,7 +203,7 @@ function doPost(e) {
     }
   }
   
-  // 2. 儲存/更新行程
+  // 2. 儲存/更新行程詳細旅遊資料
   if (action === "updateTripData") {
     const tripUuid = postData.tripUuid;
     const data = postData.data;
@@ -225,8 +225,56 @@ function doPost(e) {
                            .setMimeType(ContentService.MimeType.JSON);
     }
   }
+
+  // 3. 修改行程基本設定（名稱、出發/結束日期、天數、授權名單）
+  if (action === "updateTripMeta") {
+    const tripUuid = postData.tripUuid;
+    const name = postData.name;
+    const startDate = postData.startDate;
+    const endDate = postData.endDate;
+    const duration = postData.duration;
+    const allowedUsers = postData.allowedUsers || "";
+    
+    const tripSheet = masterSpreadsheet.getSheetByName("Trips");
+    const tripRows = tripSheet.getDataRange().getValues();
+    let targetSheetId = "";
+    let targetRowIndex = -1;
+    for (let i = 1; i < tripRows.length; i++) {
+      if (tripRows[i][0] === tripUuid) {
+        targetSheetId = tripRows[i][2];
+        targetRowIndex = i + 1; // 1-based index
+        break;
+      }
+    }
+    
+    if (targetRowIndex !== -1 && targetSheetId) {
+      // 1. 更新主控表 Trips 分頁 (名稱與授權清單)
+      tripSheet.getRange(targetRowIndex, 2).setValue(name);
+      tripSheet.getRange(targetRowIndex, 5).setValue(allowedUsers);
+      
+      // 2. 更新個別試算表 Info 分頁
+      try {
+        const subSs = SpreadsheetApp.openById(targetSheetId);
+        const infoSheet = subSs.getSheetByName("Info");
+        if (infoSheet) {
+          infoSheet.getRange(2, 2).setValue(name);
+          infoSheet.getRange(3, 2).setValue(startDate);
+          infoSheet.getRange(4, 2).setValue(endDate);
+          infoSheet.getRange(5, 2).setValue(duration);
+        }
+        return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "Trip meta updated successfully" }))
+                             .setMimeType(ContentService.MimeType.JSON);
+      } catch (err) {
+        return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Failed to update sub sheet: " + err.message }))
+                             .setMimeType(ContentService.MimeType.JSON);
+      }
+    } else {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Trip not found" }))
+                           .setMimeType(ContentService.MimeType.JSON);
+    }
+  }
   
-  // 3. 上傳圖片到該行程的雲端硬碟
+  // 4. 上傳圖片到該行程的雲端硬碟
   if (action === "uploadImage") {
     const tripUuid = postData.tripUuid;
     const filename = postData.filename;
@@ -271,7 +319,7 @@ function doPost(e) {
 }
 
 // 初始化關聯試算表結構
-function initializeSubSheet(sheetId, tripName) {
+function initializeSubSheet(sheetId, tripName, startDate, endDate, duration) {
   const ss = SpreadsheetApp.openById(sheetId);
   
   // 1. 基本資訊頁 (Info)
@@ -279,10 +327,10 @@ function initializeSubSheet(sheetId, tripName) {
   if (!infoSheet) infoSheet = ss.insertSheet("Info");
   infoSheet.clear();
   infoSheet.appendRow(["Key", "Value"]);
-  infoSheet.appendRow(["Name", tripName]);
-  infoSheet.appendRow(["StartDate", "2027-02-12"]);
-  infoSheet.appendRow(["EndDate", "2027-02-19"]);
-  infoSheet.appendRow(["Duration", "8天7夜"]);
+  infoSheet.appendRow(["Name", tripName || "旅遊手冊"]);
+  infoSheet.appendRow(["StartDate", startDate || "2027-02-12"]);
+  infoSheet.appendRow(["EndDate", endDate || "2027-02-19"]);
+  infoSheet.appendRow(["Duration", duration || "8天7夜"]);
   
   // 2. 準備清單頁 (Checklist)
   let checklistSheet = ss.getSheetByName("Checklist");
@@ -321,21 +369,42 @@ function initializeSubSheet(sheetId, tripName) {
   foodSheet.appendRow(["f1", "🦪", "日生 牡蠣燒 (お好み焼き)", "日生町", "岡山限定冬季美味", "TRUE", "FALSE"]);
 }
 
+// 輔助函式：將試算表可能自動轉為 Date 物件的時間格式過濾回乾淨字串 (例如 "14:00")
+function formatTimeString(val) {
+  if (val === null || val === undefined) return "";
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, Session.getScriptTimeZone(), "HH:mm");
+  }
+  const str = val.toString().trim();
+  // 匹配 Sat Dec 30 1899 14:00:00 或 ISO 格式
+  if (str.includes("1899") || str.includes("1900") || (str.includes("T") && str.includes("Z"))) {
+    const m = str.match(/(\d{1,2}:\d{2})(?::\d{2})?/);
+    if (m) return m[1];
+    try {
+      const d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        return Utilities.formatDate(d, Session.getScriptTimeZone(), "HH:mm");
+      }
+    } catch (e) {}
+  }
+  return str;
+}
+
 // 從個別試算表加載完整 JSON 資料
 function loadTripDetails(sheetId) {
   const ss = SpreadsheetApp.openById(sheetId);
   const result = {};
   
   // 1. Info
-  const infoRows = ss.getSheetByName("Info").getDataRange().getValues();
+  const infoRows = ss.getSheetByName("Info").getDataRange().getDisplayValues();
   result.name = infoRows[1][1];
-  result.startDate = Utilities.formatDate(new Date(infoRows[2][1]), Session.getScriptTimeZone(), "yyyy-MM-dd");
-  result.endDate = Utilities.formatDate(new Date(infoRows[3][1]), Session.getScriptTimeZone(), "yyyy-MM-dd");
+  result.startDate = infoRows[2][1];
+  result.endDate = infoRows[3][1];
   result.duration = infoRows[4][1];
   
   // 2. Checklist
   result.checklist = [];
-  const chRows = ss.getSheetByName("Checklist").getDataRange().getValues();
+  const chRows = ss.getSheetByName("Checklist").getDataRange().getDisplayValues();
   for (let i = 1; i < chRows.length; i++) {
     result.checklist.push({
       id: chRows[i][0],
@@ -349,7 +418,7 @@ function loadTripDetails(sheetId) {
   
   // 3. Flights
   result.flights = { out: {}, in: {} };
-  const flRows = ss.getSheetByName("Flights").getDataRange().getValues();
+  const flRows = ss.getSheetByName("Flights").getDataRange().getDisplayValues();
   for (let i = 1; i < flRows.length; i++) {
     const type = flRows[i][0];
     const data = {
@@ -357,35 +426,42 @@ function loadTripDetails(sheetId) {
       no: flRows[i][2],
       from: flRows[i][3],
       to: flRows[i][4],
-      date: Utilities.formatDate(new Date(flRows[i][5]), Session.getScriptTimeZone(), "yyyy-MM-dd"),
-      dep: flRows[i][6],
-      arr: flRows[i][7],
+      date: flRows[i][5],
+      dep: formatTimeString(flRows[i][6]),
+      arr: formatTimeString(flRows[i][7]),
       note: flRows[i][8]
     };
     if (type === "out") result.flights.out = data;
     if (type === "in") result.flights.in = data;
   }
   
-  // 4. Hotel
-  const hoRows = ss.getSheetByName("Hotel").getDataRange().getValues();
-  result.hotel = {
-    name: hoRows[1][0],
-    addr: hoRows[1][1],
-    checkin: Utilities.formatDate(new Date(hoRows[1][2]), Session.getScriptTimeZone(), "yyyy-MM-dd"),
-    checkout: Utilities.formatDate(new Date(hoRows[1][3]), Session.getScriptTimeZone(), "yyyy-MM-dd"),
-    nights: hoRows[1][4],
-    note: hoRows[1][5]
-  };
+  // 4. Hotel (支援多筆飯店住宿)
+  result.hotels = [];
+  const hoRows = ss.getSheetByName("Hotel").getDataRange().getDisplayValues();
+  for (let i = 1; i < hoRows.length; i++) {
+    if (!hoRows[i][0] && !hoRows[i][1]) continue;
+    result.hotels.push({
+      id: "h" + i,
+      name: hoRows[i][0],
+      addr: hoRows[i][1],
+      checkin: hoRows[i][2] || "",
+      checkout: hoRows[i][3] || "",
+      nights: hoRows[i][4],
+      note: hoRows[i][5]
+    });
+  }
+  // 向下相容單筆物件
+  result.hotel = result.hotels.length > 0 ? result.hotels[0] : {};
   
-  // 5. Days
+  // 5. Days (使用 getDisplayValues 直接讀取試算表畫面上看到的純文字)
   result.days = [];
-  const dyRows = ss.getSheetByName("Days").getDataRange().getValues();
+  const dyRows = ss.getSheetByName("Days").getDataRange().getDisplayValues();
   const dayMap = {};
   for (let i = 1; i < dyRows.length; i++) {
     const dayId = dyRows[i][0];
     const date = dyRows[i][1];
     const dayTitle = dyRows[i][2];
-    const time = dyRows[i][3];
+    const time = formatTimeString(dyRows[i][3]);
     const place = dyRows[i][4];
     const desc = dyRows[i][5];
     const imgUrl = dyRows[i][6];
@@ -460,12 +536,16 @@ function saveTripDetails(sheetId, data) {
     flightsSheet.appendRow(["in", f.airline, f.no, f.from, f.to, f.date, f.dep, f.arr, f.note]);
   }
   
-  // 4. Hotel
+  // 4. Hotel (支援多筆飯店住宿)
   const hotelSheet = ss.getSheetByName("Hotel");
   hotelSheet.clearContents();
   hotelSheet.appendRow(["name", "addr", "checkin", "checkout", "nights", "note"]);
-  const h = data.hotel || {};
-  hotelSheet.appendRow([h.name, h.addr, h.checkin, h.checkout, h.nights, h.note]);
+  const hotelList = data.hotels || (data.hotel ? [data.hotel] : []);
+  hotelList.forEach(h => {
+    if (h.name || h.addr) {
+      hotelSheet.appendRow([h.name || "", h.addr || "", h.checkin || "", h.checkout || "", h.nights || "", h.note || ""]);
+    }
+  });
   
   // 5. Days
   const daysSheet = ss.getSheetByName("Days");
