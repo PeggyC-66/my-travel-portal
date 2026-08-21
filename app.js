@@ -1951,7 +1951,7 @@ function openCreateTripModal() {
   const formHtml = `
     <div class="ef-wrap">
       <div class="ef-label">行程識別碼 (UUID，僅限英數與連字號) <span style="color:var(--red);">*</span></div>
-      <input type="text" id="newTripUuid" class="ef-input" placeholder="例如: trip-tokyo-2028">
+      <input type="text" id="newTripUuid" class="ef-input" placeholder="例如: tokyo-2028 或 trip-kyoto">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">行程名稱 <span style="color:var(--red);">*</span></div>
@@ -1972,12 +1972,12 @@ function openCreateTripModal() {
       <input type="text" id="newDuration" class="ef-input" placeholder="例如: 8天7夜">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">關聯 Google 試算表 ID <span style="color:var(--red);">*</span></div>
-      <input type="text" id="newSheetId" class="ef-input" placeholder="請貼上該行程專用試算表的 ID">
+      <div class="ef-label">關聯 Google 試算表 ID <span style="font-size:11px;color:var(--moss);font-weight:normal;">(選填，留空將自動在 my-travels 建立)</span></div>
+      <input type="text" id="newSheetId" class="ef-input" placeholder="可留空，系統將自動建立並初始化試算表">
     </div>
     <div class="ef-wrap">
-      <div class="ef-label">雲端硬碟資料夾 ID (上傳照片處) <span style="color:var(--red);">*</span></div>
-      <input type="text" id="newFolderId" class="ef-input" placeholder="請貼上雲端硬碟資料夾的 ID">
+      <div class="ef-label">雲端硬碟相簿資料夾 ID <span style="font-size:11px;color:var(--moss);font-weight:normal;">(選填，留空將自動在 my-travels 建立)</span></div>
+      <input type="text" id="newFolderId" class="ef-input" placeholder="可留空，系統將自動建立專屬相簿資料夾">
     </div>
     <div class="ef-wrap">
       <div class="ef-label">授權人員 Email (以英文逗號分隔，留空則僅管理員可見)</div>
@@ -1988,7 +1988,7 @@ function openCreateTripModal() {
   openFormModal({
     title: "➕ 建立新旅遊行程",
     bodyHtml: formHtml,
-    confirmText: "建立行程並初始化試算表",
+    confirmText: "立即建立行程 (自動建立雲端檔案)",
     onConfirm: async () => {
       const uuid = document.getElementById("newTripUuid").value.trim();
       const name = document.getElementById("newTripName").value.trim();
@@ -2001,10 +2001,8 @@ function openCreateTripModal() {
         .getElementById("newAllowedUsers")
         .value.trim();
 
-      if (!uuid || !name || !sheetId || !folderId || !startDate || !endDate) {
-        alert(
-          "請完整填寫行程識別碼、名稱、出發/結束日期、試算表 ID 與資料夾 ID！",
-        );
+      if (!uuid || !name || !startDate || !endDate) {
+        alert("請填寫行程識別碼、行程名稱以及出發/結束日期！");
         return false;
       }
 
@@ -2015,7 +2013,7 @@ function openCreateTripModal() {
       }
 
       allowedUsers = allowedUsers.replace(/，/g, ",");
-      showLoading("正在雲端建立行程並自動初始化試算表結構...");
+      showLoading("正在雲端硬碟建立專屬資料夾、試算表並初始化結構...");
 
       try {
         const res = await fetch(GAS_API_URL, {
@@ -2036,7 +2034,7 @@ function openCreateTripModal() {
         });
         const result = await res.json();
         if (result.status === "success") {
-          showToast("新行程建立成功且初始化完畢！ ✓");
+          showToast("新行程已全自動建立並完成雲端綁定！ ✓");
           await fetchTrips();
           renderAdmin();
         } else {

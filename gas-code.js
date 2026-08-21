@@ -11,6 +11,26 @@ const MASTER_SHEET_ID = "YOUR_MASTER_SHEET_ID_HERE";
 // 請填寫您的 Google Client ID (用於防止 Token 偽造/跨應用替換)
 const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID_HERE";
 
+// 旅遊總資料夾名稱（預設在雲端硬碟根目錄建立 my-travels，亦可直接填入特定 Google Drive 資料夾 ID）
+const ROOT_TRAVELS_FOLDER_NAME = "my-travels";
+
+// 取得或建立根目錄旅遊總資料夾 (my-travels)
+function getOrCreateRootFolder() {
+  if (ROOT_TRAVELS_FOLDER_NAME && ROOT_TRAVELS_FOLDER_NAME.length > 20 && !ROOT_TRAVELS_FOLDER_NAME.includes(" ")) {
+    try {
+      return DriveApp.getFolderById(ROOT_TRAVELS_FOLDER_NAME);
+    } catch (e) {
+      // 若非有效 ID 則接續以名稱尋找
+    }
+  }
+  const folderName = ROOT_TRAVELS_FOLDER_NAME || "my-travels";
+  const folders = DriveApp.getFoldersByName(folderName);
+  if (folders.hasNext()) {
+    return folders.next();
+  }
+  return DriveApp.createFolder(folderName);
+}
+
 // 驗證前端傳過來的 Google ID Token (JWT)
 // 透過 Google Tokeninfo API 安全解析出使用者的 Email，並驗證 Audience
 function verifyIdToken(token) {
@@ -210,28 +230,70 @@ function doPost(e) {
   
   const masterSpreadsheet = SpreadsheetApp.openById(MASTER_SHEET_ID);
   
-  // 1. 建立新行程與初始化
+  // 1. 建立新行程與初始化（支援自動在雲端硬碟 my-travels 下建立專屬資料夾、試算表與相簿）
   if (action === "createTrip") {
     const uuid = postData.uuid;
     const name = postData.name;
-    const sheetId = postData.sheetId;
-    const folderId = postData.folderId;
+    let sheetId = (postData.sheetId || "").trim();
+    let folderId = (postData.folderId || "").trim();
     const allowedUsers = postData.allowedUsers || "";
     const startDate = postData.startDate || "";
     const endDate = postData.endDate || "";
     const duration = postData.duration || "";
-    
-    const tripSheet = masterSpreadsheet.getSheetByName("Trips");
-    tripSheet.appendRow([uuid, name, sheetId, folderId, allowedUsers]);
-    
-    // 初始化關聯試算表的結構與分頁
+
     try {
+      let tripMainFolder = null;
+
+      // 若未指定 sheetId 或 folderId，則自動在 my-travels 目錄下建立該行程的專屬資料夾
+      if (!sheetId || !folderId) {
+        const rootFolder = getOrCreateRootFolder();
+        // 在 my-travels 下建立以行程名稱命名的專屬資料夾
+        tripMainFolder = rootFolder.createFolder(name);
+      }
+
+      // 自動建立專屬試算表（若未手動提供 sheetId）
+      if (!sheetId) {
+        const newSs = SpreadsheetApp.create(name + " - 行程手冊");
+        sheetId = newSs.getId();
+        // 將新建立的試算表移動至該行程專屬資料夾
+        if (tripMainFolder) {
+          const file = DriveApp.getFileById(sheetId);
+          file.moveTo(tripMainFolder);
+        }
+      }
+
+      // 自動建立專屬照片資料夾（若未手動提供 folderId）
+      if (!folderId) {
+        let photoFolder;
+        if (tripMainFolder) {
+          photoFolder = tripMainFolder.createFolder("景點照片與上傳檔案");
+        } else {
+          const rootFolder = getOrCreateRootFolder();
+          photoFolder = rootFolder.createFolder(name + " - 景點照片");
+        }
+        // 設定共用權限為「任何知道連結的人皆可檢視」，以供網頁直接渲染圖片
+        photoFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        folderId = photoFolder.getId();
+      }
+
+      // 寫入主控試算表的 Trips 列表
+      const tripSheet = masterSpreadsheet.getSheetByName("Trips");
+      tripSheet.appendRow([uuid, name, sheetId, folderId, allowedUsers]);
+
+      // 初始化關聯試算表的結構與分頁
       initializeSubSheet(sheetId, name, startDate, endDate, duration);
-      return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "Trip created & initialized" }))
-                           .setMimeType(ContentService.MimeType.JSON);
+
+      return ContentService.createTextOutput(JSON.stringify({ 
+        status: "success", 
+        message: "行程與試算表建立成功！",
+        sheetId: sheetId,
+        folderId: folderId
+      })).setMimeType(ContentService.MimeType.JSON);
     } catch(err) {
-      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Sheet initialized failed: " + err.message }))
-                           .setMimeType(ContentService.MimeType.JSON);
+      return ContentService.createTextOutput(JSON.stringify({ 
+        status: "error", 
+        message: "建立行程或試算表失敗: " + err.message 
+      })).setMimeType(ContentService.MimeType.JSON);
     }
   }
   
