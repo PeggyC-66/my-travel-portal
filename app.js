@@ -1843,15 +1843,15 @@ function renderAdminTripsList() {
     <div style="background:#FFF;border-radius:12px;padding:14px;margin-bottom:12px;border:1px solid var(--mist);font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,0.03);">
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <div>
-          <span style="font-weight:900;font-size:15px;color:var(--moss);">${t.name}</span>
-          <span style="font-size:11px;color:#888;margin-left:6px;background:#F0EFEA;padding:2px 6px;border-radius:6px;">${t.uuid}</span>
+          <span style="font-weight:900;font-size:15px;color:var(--moss);">${escapeHtml(t.name)}</span>
+          <span style="font-size:11px;color:#888;margin-left:6px;background:#F0EFEA;padding:2px 6px;border-radius:6px;">${escapeHtml(t.uuid)}</span>
         </div>
-        <button class="btn-mini" onclick="openEditTripMetaModal('${t.uuid}')">✏️ 編輯設定</button>
+        <button class="btn-mini" onclick="openEditTripMetaModal('${escapeHtml(t.uuid)}')">✏️ 編輯設定</button>
       </div>
       <div style="color:#666;margin-top:8px;line-height:1.6;">
-        <div>📄 試算表 ID: <span style="font-family:monospace;font-size:11px;background:#F9F9F9;padding:1px 4px;border-radius:4px;">${t.sheet_id}</span></div>
-        <div>📁 圖片資料夾 ID: <span style="font-family:monospace;font-size:11px;background:#F9F9F9;padding:1px 4px;border-radius:4px;">${t.folder_id}</span></div>
-        <div>👥 授權團員: <span style="color:${t.allowed_users ? "#333" : "#999"};">${t.allowed_users || "僅管理員"}</span></div>
+        <div>📄 試算表 ID: <span style="font-family:monospace;font-size:11px;background:#F9F9F9;padding:1px 4px;border-radius:4px;">${escapeHtml(t.sheet_id || "")}</span></div>
+        <div>📁 圖片資料夾 ID: <span style="font-family:monospace;font-size:11px;background:#F9F9F9;padding:1px 4px;border-radius:4px;">${escapeHtml(t.folder_id || "")}</span></div>
+        <div>👥 授權團員: <span style="color:${t.allowed_users ? "#333" : "#999"};">${escapeHtml(t.allowed_users || "僅管理員")}</span></div>
       </div>
     </div>
   `,
