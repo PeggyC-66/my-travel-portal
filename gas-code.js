@@ -9,7 +9,7 @@
 const MASTER_SHEET_ID = "YOUR_MASTER_SHEET_ID_HERE";
 
 // 請填寫您的 Google Client ID (用於防止 Token 偽造/跨應用替換)
-const GOOGLE_CLIENT_ID = "1067455132781-b64vlah8m5q3tviglb3s1s3do4bmmh8i.apps.googleusercontent.com";
+const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID_HERE";
 
 // 驗證前端傳過來的 Google ID Token (JWT)
 // 透過 Google Tokeninfo API 安全解析出使用者的 Email，並驗證 Audience

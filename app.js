@@ -1,8 +1,8 @@
-// 設定您的 Google Client ID 與 GAS API URL
-const GOOGLE_CLIENT_ID =
-  "1067455132781-b64vlah8m5q3tviglb3s1s3do4bmmh8i.apps.googleusercontent.com";
-const GAS_API_URL =
-  "https://script.google.com/macros/s/AKfycbxjN6DshWVSIljopHSLmSz8SvFOv4_pCFUmKakJllLEkY_Oz1oro-Gqp4cwxsjurq4/exec";
+// =========================================================================
+// 公版設定：請填入您的 Google Client ID 與 GAS API URL
+// =========================================================================
+const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com";
+const GAS_API_URL = "https://script.google.com/macros/s/YOUR_GAS_DEPLOYMENT_ID/exec";
 
 // 前端全局狀態管理
 let idToken = localStorage.getItem("google_id_token") || null;
@@ -1097,7 +1097,8 @@ function deleteHotel(index) {
     confirmText: "確定刪除",
     onConfirm: () => {
       if (!tripData.hotels) {
-        tripData.hotels = tripData.hotel && tripData.hotel.name ? [tripData.hotel] : [];
+        tripData.hotels =
+          tripData.hotel && tripData.hotel.name ? [tripData.hotel] : [];
       }
       tripData.hotels.splice(index, 1);
       renderFlights();
@@ -1110,7 +1111,11 @@ function deleteHotel(index) {
 function cleanTimeDisplay(t) {
   if (!t) return "行程";
   const str = t.toString().trim();
-  if (str.includes("1899") || str.includes("1900") || (str.includes("T") && str.includes("Z"))) {
+  if (
+    str.includes("1899") ||
+    str.includes("1900") ||
+    (str.includes("T") && str.includes("Z"))
+  ) {
     // 優先使用正則表達式擷取裡面的 HH:mm (例如 14:00:00 擷取出 14:00)
     const timeMatch = str.match(/(\d{1,2}:\d{2})(?::\d{2})?/);
     if (timeMatch) {
@@ -1157,7 +1162,11 @@ function renderItinerary() {
   // 天數切換按鈕列表
   const dayBtns = tripData.days
     .map((d, i) => {
-      const dateText = (d.date || "").split("（")[0].replace("月", "/").replace("日", "").trim();
+      const dateText = (d.date || "")
+        .split("（")[0]
+        .replace("月", "/")
+        .replace("日", "")
+        .trim();
       return `
         <button class="day-btn ${i === selectedDay ? "active" : ""}" onclick="selectedDay=${i};renderItinerary()">
           <span class="day-btn-date">${dateText || `第 ${i + 1} 天`}</span>
@@ -1247,7 +1256,8 @@ function renderItinerary() {
         ${dayActions}
       </div>
       <div class="timeline">${
-        items || '<p style="color:#888;font-size:13px;padding:10px 0;">本日尚無規劃景點，請點擊下方按鈕新增！</p>'
+        items ||
+        '<p style="color:#888;font-size:13px;padding:10px 0;">本日尚無規劃景點，請點擊下方按鈕新增！</p>'
       }</div>
       ${addBtn}
     </div>
@@ -1292,7 +1302,8 @@ function openAddDayModal() {
     bodyHtml: formHtml,
     confirmText: "確認新增並同步",
     onConfirm: () => {
-      const dayId = document.getElementById("addDayId").value.trim() || nextDayId;
+      const dayId =
+        document.getElementById("addDayId").value.trim() || nextDayId;
       const title = document.getElementById("addDayTitle").value.trim();
       const date = document.getElementById("addDayDate").value.trim();
 
@@ -1912,10 +1923,14 @@ function openCreateTripModal() {
       const duration = document.getElementById("newDuration").value.trim();
       const sheetId = document.getElementById("newSheetId").value.trim();
       const folderId = document.getElementById("newFolderId").value.trim();
-      let allowedUsers = document.getElementById("newAllowedUsers").value.trim();
+      let allowedUsers = document
+        .getElementById("newAllowedUsers")
+        .value.trim();
 
       if (!uuid || !name || !sheetId || !folderId || !startDate || !endDate) {
-        alert("請完整填寫行程識別碼、名稱、出發/結束日期、試算表 ID 與資料夾 ID！");
+        alert(
+          "請完整填寫行程識別碼、名稱、出發/結束日期、試算表 ID 與資料夾 ID！",
+        );
         return false;
       }
 
