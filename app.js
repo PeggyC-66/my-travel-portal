@@ -184,6 +184,28 @@ function parseJwt(token) {
   }
 }
 
+// =========================================================================
+// 安全性防禦函式 (XSS 與惡意連結過濾)
+// =========================================================================
+function escapeHtml(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function sanitizeUrl(url) {
+  if (!url) return "";
+  const trimmed = String(url).trim();
+  if (/^(https?:\/\/|data:image\/|blob:|\/|mailto:)/i.test(trimmed)) {
+    return trimmed;
+  }
+  return "#";
+}
+
 // 取得行程清單 (支援已登入管理員、團員或未登入訪客)
 async function fetchTrips() {
   showLoading("載入行程清單中...");
@@ -243,11 +265,13 @@ function renderHubTripsGrid() {
 
   const cardsHtml = tripsList
     .map((t) => {
+      const safeName = escapeHtml(t.name);
+      const safeUuid = escapeHtml(t.uuid);
       return `
-        <div class="trip-hub-card" onclick="navigateTo('${t.uuid}')">
+        <div class="trip-hub-card" onclick="navigateTo('${safeUuid}')">
           <div>
-            <div class="hub-card-title">🍑 ${t.name}</div>
-            <div class="hub-card-uuid">識別碼: ${t.uuid}</div>
+            <div class="hub-card-title">🍑 ${safeName}</div>
+            <div class="hub-card-uuid">識別碼: ${safeUuid}</div>
             <div class="hub-card-meta">
               <div>✈️ 點擊開啟專屬旅遊手冊</div>
               <div>📖 包含每日行程、航班住宿、美食口袋與備忘清單</div>
@@ -489,6 +513,11 @@ function renderChecklist() {
            </div>`
         : "";
 
+      const safeCat = escapeHtml(item.cat || "備忘");
+      const safeTitle = escapeHtml(item.title || "");
+      const safeNote = escapeHtml(item.note || "");
+      const safeLink = sanitizeUrl(item.link);
+
       return `
         <div style="display:flex;align-items:flex-start;gap:12px;padding:14px 0;border-bottom:1px solid var(--mist);">
           <input type="checkbox" style="width:19px;height:19px;accent-color:var(--moss);margin-top:2px;cursor:pointer;" ${
@@ -499,21 +528,21 @@ function renderChecklist() {
           }">
             <div style="display:flex;justify-content:space-between;align-items:center;">
               <span style="font-size:10px;font-weight:800;color:var(--gold);background:var(--gold-soft);padding:2px 8px;border-radius:6px;letter-spacing:0.5px;">${
-                item.cat || "備忘"
+                safeCat
               }</span>
               ${adminActions}
             </div>
             <div style="font-size:15px;font-weight:700;margin-top:4px;">${
-              item.title || ""
+              safeTitle
             }</div>
             ${
-              item.note
-                ? `<div style="font-size:12px;color:#666;margin-top:2px;">${item.note}</div>`
+              safeNote
+                ? `<div style="font-size:12px;color:#666;margin-top:2px;">${safeNote}</div>`
                 : ""
             }
             ${
-              item.link
-                ? `<a href="${item.link}" target="_blank" style="display:inline-block;margin-top:5px;font-size:11px;color:var(--moss);font-weight:bold;text-decoration:none;">🔗 點擊預約/查看</a>`
+              safeLink && safeLink !== "#"
+                ? `<a href="${safeLink}" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:5px;font-size:11px;color:var(--moss);font-weight:bold;text-decoration:none;">🔗 點擊預約/查看</a>`
                 : ""
             }
           </div>
@@ -757,22 +786,27 @@ function renderFlights() {
                   }`
                 : `📅 尚未設定住宿日期`;
 
+            const safeName = escapeHtml(h.name || "未命名飯店");
+            const safeAddr = escapeHtml(h.addr || "尚未填寫地址");
+            const safeNote = escapeHtml(h.note || "");
+            const safeDateLine = escapeHtml(dateLine);
+
             return `
               <div class="hotel-card" style="margin-bottom:12px;">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-                  <div class="hotel-name">🏨 ${h.name || "未命名飯店"}</div>
+                  <div class="hotel-name">🏨 ${safeName}</div>
                   ${adminActions}
                 </div>
-                <div class="hotel-meta">📍 ${h.addr || "尚未填寫地址"}</div>
-                <div class="hotel-meta">${dateLine}</div>
+                <div class="hotel-meta">📍 ${safeAddr}</div>
+                <div class="hotel-meta">${safeDateLine}</div>
                 ${
-                  h.note
-                    ? `<div style="font-size:12px;color:#6B5A2A;background:var(--gold-soft);padding:8px 12px;border-radius:8px;margin:10px 0;">💡 ${h.note}</div>`
+                  safeNote
+                    ? `<div style="font-size:12px;color:#6B5A2A;background:var(--gold-soft);padding:8px 12px;border-radius:8px;margin:10px 0;">💡 ${safeNote}</div>`
                     : ""
                 }
                 ${
                   hotelMapUrl
-                    ? `<a class="map-link" href="${hotelMapUrl}" target="_blank">🗺 Google 地圖導航</a>`
+                    ? `<a class="map-link" href="${hotelMapUrl}" target="_blank" rel="noopener noreferrer">🗺 Google 地圖導航</a>`
                     : ""
                 }
               </div>
@@ -1166,24 +1200,27 @@ function renderItinerary() {
         : "";
 
       const displayTime = cleanTimeDisplay(item.time);
+      const safePlace = escapeHtml(item.place || "未命名景點");
+      const safeDesc = escapeHtml(item.desc || "");
+      const safeImgUrl = sanitizeUrl(item.imgUrl);
 
       return `
         <div class="tl">
           <div class="tl-time-badge">${displayTime}</div>
           <div class="tl-content">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-              <div class="tl-place">${item.place || "未命名景點"}</div>
+              <div class="tl-place">${safePlace}</div>
               ${adminActions}
             </div>
-            ${item.desc ? `<div class="tl-desc">${item.desc}</div>` : ""}
+            ${safeDesc ? `<div class="tl-desc">${safeDesc}</div>` : ""}
             ${
-              item.imgUrl
-                ? `<div style="margin-top:10px;"><img src="${item.imgUrl}" style="max-width:100%;max-height:220px;border-radius:12px;box-shadow:var(--shadow-sm);display:block;"></div>`
+              safeImgUrl && safeImgUrl !== "#"
+                ? `<div style="margin-top:10px;"><img src="${safeImgUrl}" style="max-width:100%;max-height:220px;border-radius:12px;box-shadow:var(--shadow-sm);display:block;" onerror="this.style.display='none'"></div>`
                 : ""
             }
             ${
               autoMapUrl
-                ? `<a class="map-link" href="${autoMapUrl}" target="_blank">🗺 地圖導航</a>`
+                ? `<a class="map-link" href="${autoMapUrl}" target="_blank" rel="noopener noreferrer">🗺 地圖導航</a>`
                 : ""
             }
           </div>
@@ -1572,17 +1609,22 @@ function renderFood() {
            </div>`
         : "";
 
+      const safeEmoji = escapeHtml(item.emoji || "🍴");
+      const safeName = escapeHtml(item.name || "");
+      const safeArea = escapeHtml(item.area || "周邊地區");
+      const safeDesc = escapeHtml(item.desc || "");
+
       return `
         <div style="display:flex;align-items:center;gap:14px;padding:14px 0;border-bottom:1px solid var(--mist);">
           <span style="font-size:28px;flex-shrink:0;opacity:${
             item.done ? 0.35 : 1
-          };">${item.emoji || "🍴"}</span>
+          };">${safeEmoji}</span>
           <div style="flex:1;${
             item.done ? "text-decoration:line-through;opacity:0.4;" : ""
           }">
             <div style="display:flex;justify-content:space-between;align-items:center;">
               <div style="font-size:15px;font-weight:800;color:var(--ink);">${
-                item.name || ""
+                safeName
               } ${
                 item.must
                   ? '<span style="font-size:10px;background:var(--red);color:#fff;padding:2px 6px;border-radius:4px;vertical-align:middle;font-weight:normal;">必吃</span>'
@@ -1591,10 +1633,10 @@ function renderFood() {
               ${adminActions}
             </div>
             <div style="font-size:11px;color:var(--gold);font-weight:700;margin-top:2px;">📍 ${
-              item.area || "周邊地區"
+              safeArea
             }</div>
             <div style="font-size:12px;color:#666;margin-top:3px;">${
-              item.desc || ""
+              safeDesc
             }</div>
           </div>
           <button onclick="toggleFoodDone(${i})" style="flex-shrink:0;border:none;border-radius:14px;padding:6px 14px;font-size:11px;font-weight:bold;cursor:pointer;background:${

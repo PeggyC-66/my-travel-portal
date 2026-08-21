@@ -8,14 +8,26 @@
 // 請貼上您在第一步建立的「主控試算表 (Master Sheet)」的 ID
 const MASTER_SHEET_ID = "YOUR_MASTER_SHEET_ID_HERE";
 
+// 請填寫您的 Google Client ID (用於防止 Token 偽造/跨應用替換)
+const GOOGLE_CLIENT_ID = "1067455132781-b64vlah8m5q3tviglb3s1s3do4bmmh8i.apps.googleusercontent.com";
+
 // 驗證前端傳過來的 Google ID Token (JWT)
-// 透過 Google Tokeninfo API 安全解析出使用者的 Email
+// 透過 Google Tokeninfo API 安全解析出使用者的 Email，並驗證 Audience
 function verifyIdToken(token) {
   if (!token) return null;
   try {
-    const url = "https://oauth2.googleapis.com/tokeninfo?id_token=" + token;
+    const url = "https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(token);
     const response = UrlFetchApp.fetch(url);
     const json = JSON.parse(response.getContentText());
+    
+    // 安全性防禦：驗證 Audience (aud)，確保此 Token 是專為此應用程式簽發的
+    if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID !== "YOUR_GOOGLE_CLIENT_ID_HERE") {
+      if (json.aud !== GOOGLE_CLIENT_ID) {
+        Logger.log("安全性警示: Token aud 不匹配，拒絕存取");
+        return null;
+      }
+    }
+    
     if (json.email) {
       return json.email.toLowerCase();
     }
@@ -56,19 +68,20 @@ function getUserAccess(email) {
     if (!uuid) continue;
     
     // 如果是管理員，可以看到所有行程
-    // 如果是一般人，檢查其 Email 是否在 allowedUsersStr 清單內
+    // 如果是一般人，檢查其 Email 是否在 allowedUsersStr 清單內，或是公開行程
     if (isAdmin) {
       allowedTrips.push({ uuid: uuid, name: name, sheet_id: sheetId, folder_id: folderId, allowed_users: allowedUsersStr });
     } else {
       const allowedEmails = allowedUsersStr.toLowerCase().split(",").map(e => e.trim());
-      if (allowedEmails.indexOf(email) !== -1) {
+      const isPublic = !allowedUsersStr || allowedEmails.includes("*") || allowedEmails.includes("public");
+      if (isPublic || (email && allowedEmails.indexOf(email) !== -1)) {
         allowedTrips.push({ uuid: uuid, name: name }); // 一般團員隱蔽實體 Sheet & Folder ID
       }
     }
   }
   
   return {
-    role: isAdmin ? "admin" : "user",
+    role: isAdmin ? "admin" : (email ? "user" : "guest"),
     trips: allowedTrips
   };
 }
@@ -93,12 +106,15 @@ function doGet(e) {
   if (email) {
     access = getUserAccess(email);
   } else {
-    // 訪客模式：讀取所有行程清單（隱蔽 Sheet & Folder ID）
+    // 訪客模式：僅讀取公開行程清單（隱蔽 Sheet & Folder ID）
     const publicTrips = [];
     for (let i = 1; i < tripRows.length; i++) {
       const uuid = tripRows[i][0];
       const name = tripRows[i][1];
-      if (uuid) {
+      const allowedUsersStr = tripRows[i][4] || "";
+      const allowedEmails = allowedUsersStr.toLowerCase().split(",").map(u => u.trim());
+      const isPublic = !allowedUsersStr || allowedEmails.includes("*") || allowedEmails.includes("public");
+      if (uuid && isPublic) {
         publicTrips.push({ uuid: uuid, name: name });
       }
     }
@@ -118,11 +134,13 @@ function doGet(e) {
   if (action === "getTripData") {
     const tripUuid = e.parameter.tripUuid;
     let targetSheetId = "";
+    let allowedUsersStr = "";
     
-    // 搜尋對應的 Sheet ID
+    // 搜尋對應的 Sheet ID 與授權名單
     for (let i = 1; i < tripRows.length; i++) {
       if (tripRows[i][0] === tripUuid) {
         targetSheetId = tripRows[i][2];
+        allowedUsersStr = tripRows[i][4] || "";
         break;
       }
     }
@@ -130,6 +148,20 @@ function doGet(e) {
     if (!targetSheetId) {
       return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "找不到該行程專屬試算表" }))
                            .setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    // 權限檢查：若非管理員，檢查是否允許存取
+    const allowedEmails = allowedUsersStr.toLowerCase().split(",").map(s => s.trim());
+    const isPublic = !allowedUsersStr || allowedEmails.includes("*") || allowedEmails.includes("public");
+    const isMember = email && allowedEmails.includes(email);
+    const isAdmin = access.role === "admin";
+    
+    // 若該行程為私人專屬且目前訪客/使用者無權限
+    if (!isPublic && !isMember && !isAdmin) {
+      return ContentService.createTextOutput(JSON.stringify({ 
+        status: "error", 
+        message: "此行程為私人專屬手冊，請先登入已被授權的 Google 帳號。" 
+      })).setMimeType(ContentService.MimeType.JSON);
     }
     
     // 讀取該旅遊專屬試算表的資料
