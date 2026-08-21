@@ -324,25 +324,41 @@ function doPost(e) {
       }
     }
     
-    if (folderId) {
-      try {
-        const folder = DriveApp.getFolderById(folderId);
-        const decoded = Utilities.base64Decode(base64Data);
-        const blob = Utilities.newBlob(decoded, mimeType, filename);
-        const file = folder.createFile(blob);
-        
-        // 設定共用權限為「任何知道連結的人皆可檢視」，以供網頁直接渲染
-        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        const fileId = file.getId();
-        // 轉換為直連預覽網址
-        const previewUrl = "https://drive.google.com/uc?export=view&id=" + fileId;
-        
-        return ContentService.createTextOutput(JSON.stringify({ status: "success", url: previewUrl }))
-                             .setMimeType(ContentService.MimeType.JSON);
-      } catch (err) {
-        return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Drive upload failed: " + err.message }))
-                             .setMimeType(ContentService.MimeType.JSON);
+    try {
+      let folder;
+      if (folderId) {
+        try {
+          folder = DriveApp.getFolderById(folderId);
+        } catch (e) {
+          folder = null;
+        }
       }
+      
+      // 若未設定 folderId 或找不到該資料夾，則使用 Google 雲端硬碟根目錄或預設資料夾
+      if (!folder) {
+        const defaultFolders = DriveApp.getFoldersByName("Travel_Uploads");
+        if (defaultFolders.hasNext()) {
+          folder = defaultFolders.next();
+        } else {
+          folder = DriveApp.createFolder("Travel_Uploads");
+        }
+      }
+
+      const decoded = Utilities.base64Decode(base64Data);
+      const blob = Utilities.newBlob(decoded, mimeType, filename);
+      const file = folder.createFile(blob);
+      
+      // 設定共用權限為「任何知道連結的人皆可檢視」，以供網頁直接渲染
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      const fileId = file.getId();
+      // 轉換為支援網頁 <img> 直接載入的 Google CDN 直連網址
+      const previewUrl = "https://lh3.googleusercontent.com/d/" + fileId;
+      
+      return ContentService.createTextOutput(JSON.stringify({ status: "success", url: previewUrl, fileId: fileId }))
+                           .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return ContentService.createTextOutput(JSON.stringify({ status: "error", message: "Drive 上傳失敗: " + err.message }))
+                           .setMimeType(ContentService.MimeType.JSON);
     }
   }
   

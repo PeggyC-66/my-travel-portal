@@ -1,8 +1,10 @@
 // =========================================================================
 // 公版設定：請填入您的 Google Client ID 與 GAS API URL
 // =========================================================================
-const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com";
-const GAS_API_URL = "https://script.google.com/macros/s/YOUR_GAS_DEPLOYMENT_ID/exec";
+const GOOGLE_CLIENT_ID =
+  "1067455132781-b64vlah8m5q3tviglb3s1s3do4bmmh8i.apps.googleusercontent.com";
+const GAS_API_URL =
+  "https://script.google.com/macros/s/AKfycbxjN6DshWVSIljopHSLmSz8SvFOv4_pCFUmKakJllLEkY_Oz1oro-Gqp4cwxsjurq4/exec";
 
 // 前端全局狀態管理
 let idToken = localStorage.getItem("google_id_token") || null;
@@ -204,6 +206,67 @@ function sanitizeUrl(url) {
     return trimmed;
   }
   return "#";
+}
+
+/**
+ * 將各種形式的圖片網址（包含 Google Drive 分享/預覽/直連連結）
+ * 自動轉換為網頁 <img> 標籤可直接載入的 Google CDN 直連格式
+ */
+function formatImageUrl(url) {
+  if (!url) return "";
+  const raw = String(url).trim();
+  if (!raw) return "";
+
+  // 1. 若已經是 base64 或 blob 格式
+  if (/^data:image\/|^blob:/i.test(raw)) {
+    return raw;
+  }
+
+  // 2. 解析 Google Drive 各種格式並提取 File ID
+  let fileId = "";
+  const fileDMatch = raw.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileDMatch && fileDMatch[1]) {
+    fileId = fileDMatch[1];
+  } else {
+    const idParamMatch = raw.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (idParamMatch && idParamMatch[1]) {
+      fileId = idParamMatch[1];
+    } else {
+      const lh3Match = raw.match(/googleusercontent\.com\/d\/([a-zA-Z0-9_-]+)/);
+      if (lh3Match && lh3Match[1]) {
+        fileId = lh3Match[1];
+      }
+    }
+  }
+
+  // 如果成功辨識為 Google Drive 檔案，轉換為穩定支援 <img> 的 Google CDN 格式
+  if (fileId) {
+    return `https://lh3.googleusercontent.com/d/${fileId}`;
+  }
+
+  return raw;
+}
+
+/**
+ * 圖片載入失敗時的雙層備援機制（切換為高畫質縮圖或提供開啟連結）
+ */
+function handleImgError(imgEl, rawUrl) {
+  if (!imgEl.dataset.triedFallback) {
+    imgEl.dataset.triedFallback = "true";
+    let fileId = "";
+    const match = rawUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || rawUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (match && match[1]) {
+      fileId = match[1];
+      imgEl.src = `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`;
+      return;
+    }
+  }
+  const parent = imgEl.parentElement;
+  if (parent) {
+    parent.innerHTML = `<div style="font-size:12px;color:var(--moss);padding:6px 0;">🖼️ <a href="${rawUrl}" target="_blank" rel="noopener noreferrer" style="color:var(--moss);text-decoration:underline;font-weight:600;">點此開啟景點照片 ↗</a></div>`;
+  } else {
+    imgEl.style.display = "none";
+  }
 }
 
 // 取得行程清單 (支援已登入管理員、團員或未登入訪客)
@@ -1211,7 +1274,9 @@ function renderItinerary() {
       const displayTime = cleanTimeDisplay(item.time);
       const safePlace = escapeHtml(item.place || "未命名景點");
       const safeDesc = escapeHtml(item.desc || "");
-      const safeImgUrl = sanitizeUrl(item.imgUrl);
+      const formattedImg = formatImageUrl(item.imgUrl);
+      const safeImgUrl = sanitizeUrl(formattedImg);
+      const rawImgUrl = escapeHtml(item.imgUrl || "");
 
       return `
         <div class="tl">
@@ -1224,7 +1289,15 @@ function renderItinerary() {
             ${safeDesc ? `<div class="tl-desc">${safeDesc}</div>` : ""}
             ${
               safeImgUrl && safeImgUrl !== "#"
-                ? `<div style="margin-top:10px;"><img src="${safeImgUrl}" style="max-width:100%;max-height:220px;border-radius:12px;box-shadow:var(--shadow-sm);display:block;" onerror="this.style.display='none'"></div>`
+                ? `<div style="margin-top:10px;">
+                    <a href="${safeImgUrl}" target="_blank" rel="noopener noreferrer" title="點擊檢視大圖">
+                      <img src="${safeImgUrl}" 
+                           alt="${safePlace}" 
+                           loading="lazy" 
+                           style="max-width:100%;max-height:240px;border-radius:12px;box-shadow:var(--shadow-sm);display:block;cursor:pointer;object-fit:cover;" 
+                           onerror="handleImgError(this, '${rawImgUrl}')">
+                    </a>
+                  </div>`
                 : ""
             }
             ${
@@ -1426,7 +1499,7 @@ function openEditItineraryModal(dayIdx, itemIdx) {
     <div id="modalImgPreview" style="margin-top:6px;">
       ${
         item.imgUrl
-          ? `<img src="${item.imgUrl}" style="max-height:140px;border-radius:8px;display:block;">
+          ? `<img src="${formatImageUrl(item.imgUrl)}" style="max-height:140px;border-radius:8px;display:block;" onerror="handleImgError(this, '${escapeHtml(item.imgUrl)}')">
              <button type="button" class="btn-mini btn-mini-danger" style="margin-top:6px;" onclick="removeModalImage('editItImgUrl', 'modalImgPreview')">🗑️ 移除此照片</button>`
           : ""
       }
@@ -1502,8 +1575,9 @@ async function uploadImageInModal(input, imgUrlInputId, previewDivId) {
       const result = await res.json();
       if (result.status === "success") {
         document.getElementById(imgUrlInputId).value = result.url;
+        const displayUrl = formatImageUrl(result.url);
         previewDiv.innerHTML = `
-          <img src="${result.url}" style="max-height:140px;border-radius:8px;display:block;">
+          <img src="${displayUrl}" style="max-height:140px;border-radius:8px;display:block;" onerror="handleImgError(this, '${result.url}')">
           <button type="button" class="btn-mini btn-mini-danger" style="margin-top:6px;" onclick="removeModalImage('${imgUrlInputId}', '${previewDivId}')">🗑️ 移除此照片</button>
         `;
         showToast("照片上傳成功 ✓");
